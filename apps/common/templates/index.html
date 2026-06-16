@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ title }}</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --accent: #f05a28;
+      --accent-2: #00d4aa;
+      --text: #e8eef7;
+      --muted: #8b9cb3;
+      --border: #2a3a52;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top left, #1f2d44, var(--bg));
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 24px; }
+    header {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      gap: 16px; margin-bottom: 20px;
+    }
+    h1 { margin: 0; font-size: 1.5rem; }
+    .badge {
+      background: rgba(240, 90, 40, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(240, 90, 40, 0.4);
+      padding: 6px 10px; border-radius: 999px; font-size: 0.75rem;
+    }
+    .panel {
+      background: rgba(26, 35, 50, 0.9);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    #chat { min-height: 320px; max-height: 50vh; overflow-y: auto; }
+    .msg { margin: 12px 0; line-height: 1.5; }
+    .msg.user strong { color: var(--accent-2); }
+    .msg.assistant strong { color: var(--accent); }
+    .tools {
+      margin-top: 8px; padding: 10px; border-radius: 10px;
+      background: rgba(0, 212, 170, 0.08); border: 1px solid rgba(0, 212, 170, 0.25);
+      font-size: 0.85rem;
+    }
+    form { display: flex; gap: 10px; }
+    input, button {
+      border-radius: 12px; border: 1px solid var(--border);
+      padding: 12px 14px; font-size: 1rem;
+    }
+    input {
+      flex: 1; background: #0d1218; color: var(--text);
+    }
+    button {
+      background: linear-gradient(135deg, var(--accent), #ff8c42);
+      color: #111; border: none; font-weight: 600; cursor: pointer;
+    }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .hint { color: var(--muted); font-size: 0.85rem; margin-top: 8px; }
+    .prompts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .prompts button {
+      background: transparent; color: var(--muted); border-color: var(--border);
+      font-size: 0.8rem; padding: 8px 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>{{ title }}</h1>
+        <p class="hint">{{ subtitle }}</p>
+      </div>
+      <span class="badge">{{ mode_label }}</span>
+    </header>
+
+    <div class="panel" id="chat"></div>
+
+    <form id="form">
+      <input id="input" placeholder="Ask the agent what it did…" autocomplete="off" />
+      <button type="submit" id="send">Send</button>
+    </form>
+    <p class="hint">Try: “What can you tell me about OBI?” or “Plan accountability for deploying an AI agent.”</p>
+    <div class="prompts">
+      <button type="button" data-prompt="Search the knowledge base for KubeCon and summarize.">KubeCon summary</button>
+      <button type="button" data-prompt="List topics and explain how OpenLIT complements eBPF.">OpenLIT + eBPF</button>
+      <button type="button" data-prompt="Create an accountability plan for debugging a rogue agent in production.">Accountability plan</button>
+    </div>
+  </div>
+  <script>
+    const chat = document.getElementById('chat');
+    const form = document.getElementById('form');
+    const input = document.getElementById('input');
+    const send = document.getElementById('send');
+    const history = [];
+
+    function appendMessage(role, content, toolEvents) {
+      const div = document.createElement('div');
+      div.className = 'msg ' + role;
+      const label = role === 'user' ? 'You' : 'Agent';
+      div.innerHTML = '<strong>' + label + '</strong><div>' + escapeHtml(content) + '</div>';
+      if (toolEvents && toolEvents.length) {
+        const tools = document.createElement('div');
+        tools.className = 'tools';
+        tools.innerHTML = '<strong>Tool calls</strong><pre>' + escapeHtml(JSON.stringify(toolEvents, null, 2)) + '</pre>';
+        div.appendChild(tools);
+      }
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+    }
+
+    async function submitMessage(message) {
+      if (!message.trim()) return;
+      appendMessage('user', message);
+      history.push({ role: 'user', content: message });
+      input.value = '';
+      send.disabled = true;
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message, history }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Request failed');
+        appendMessage('assistant', data.answer, data.tool_events);
+        history.push({ role: 'assistant', content: data.answer });
+      } catch (err) {
+        appendMessage('assistant', 'Error: ' + err.message);
+      } finally {
+        send.disabled = false;
+        input.focus();
+      }
+    }
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      submitMessage(input.value);
+    });
+
+    document.querySelectorAll('[data-prompt]').forEach((btn) => {
+      btn.addEventListener('click', () => submitMessage(btn.dataset.prompt));
+    });
+  </script>
+</body>
+</html>

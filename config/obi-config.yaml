@@ -1,0 +1,43 @@
+# OBI config — zero-code GenAI tracing of the agent's OpenAI HTTP traffic.
+# Docs: https://opentelemetry.io/docs/zero-code/obi/configure/
+#
+# Only three things matter for this demo:
+#   1. discovery       -> which process to instrument (the :8080 agent)
+#   2. payload_extraction.genai.openai + bigger http buffer -> turn HTTP spans into gen_ai.* spans
+#   3. attributes.select.traces -> opt-in to attach the (large) chat payload attributes
+log_level: info
+
+discovery:
+  instrument:
+    # agent-ebpf-only listens on 8080. The OpenLIT app (:8081) is traced by its SDK, not OBI.
+    - open_ports: "8080"
+
+ebpf:
+  # GenAI request/response bodies are large; the default buffer truncates them.
+  buffer_sizes:
+    http: 65536
+  payload_extraction:
+    http:
+      genai:
+        openai:
+          enabled: true
+
+otel_traces_export:
+  endpoint: http://otel-collector:4317
+  protocol: grpc
+  # GenAI is not in OBI's default trace instrumentation set, so list it explicitly.
+  instrumentations: ["genai", "http"]
+
+otel_metrics_export:
+  endpoint: http://otel-collector:4317
+  protocol: grpc
+  instrumentations: ["genai", "http"]
+
+attributes:
+  select:
+    traces:
+      include:
+        - gen_ai.input.messages
+        - gen_ai.output.messages
+        - gen_ai.system_instructions
+        - gen_ai.tool.definitions

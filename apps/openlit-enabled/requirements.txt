@@ -1,0 +1,7 @@
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+openai==2.41.1
+openai-agents==0.17.5
+openlit==1.42.0
+python-multipart==0.0.20
+jinja2==3.1.6

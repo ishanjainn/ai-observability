@@ -1,0 +1,105 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "code": { "language": "plaintext", "showLineNumbers": false, "showMiniMap": false },
+        "content": "# What did the agent do?\n\nTwo ways to observe the same agent:\n\n- **:8080 agent-ebpf-only** — zero code. **OBI (eBPF)** reconstructs GenAI calls off the wire → `chat.completion gpt-4o-mini` spans with `gen_ai.*`.\n- **:8081 agent-openlit** — **OpenAI Agents SDK** auto-instrumented by **OpenLIT** → `create_agent` + `chat` LLM spans.\n\nSet time range to **Last 15 minutes**.",
+        "mode": "markdown"
+      },
+      "title": "Demo guide",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 4 },
+      "id": 2,
+      "targets": [
+        {
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{ resource.service.name = \"agent-ebpf-only\" && name =~ \"chat.completion.*\" }",
+          "limit": 20,
+          "refId": "A"
+        }
+      ],
+      "title": "GenAI spans — zero-code eBPF (agent-ebpf-only)",
+      "type": "traces"
+    },
+    {
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 4 },
+      "id": 5,
+      "targets": [
+        {
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{ resource.service.name = \"agent-openlit\" && (name =~ \"invoke_workflow.*\" || name =~ \"execute_tool.*\") }",
+          "limit": 20,
+          "refId": "A"
+        }
+      ],
+      "title": "Agent spans — OpenLIT SDK (agent-openlit)",
+      "type": "traces"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum(rate(http_client_request_duration_seconds_count{http_route=\"/v1/chat/completions\"}[5m])) by (service_name, server_address)",
+          "legendFormat": "{{service_name}} → {{server_address}}",
+          "refId": "A"
+        }
+      ],
+      "title": "OpenAI chat/completions rate (OBI)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum(rate(traces_spanmetrics_calls_total{service_name=~\"agent.*\"}[5m])) by (service_name)",
+          "legendFormat": "{{service_name}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Span rate (Tempo metrics-generator → Prometheus)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["kubecon", "obi", "openlit", "genai"],
+  "templating": { "list": [] },
+  "time": { "from": "now-15m", "to": "now" },
+  "timezone": "browser",
+  "title": "AI Agent Observability Demo",
+  "uid": "ai-agent-obs-demo",
+  "version": 2
+}

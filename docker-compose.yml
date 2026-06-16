@@ -1,0 +1,151 @@
+# KubeCon Mumbai 2026 — AI agent observability demo
+# Requires: Linux host with Docker (eBPF needs kernel 5.8+). Docker Desktop on Mac runs Linux VM.
+
+name: ai-observability-demo
+
+services:
+  tempo:
+    image: grafana/tempo:2.6.1
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./config/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-remote-write-receiver
+      - --enable-feature=exemplar-storage
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  otel-collector:
+    # NOTE: 0.116.0 fails on arm64 (exec /otelcol-contrib: no such file or directory)
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./config/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8889:8889"
+    healthcheck:
+      test: ["CMD", "/otelcol-contrib", "validate", "--config=/etc/otelcol-contrib/config.yaml"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      - tempo
+      - prometheus
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_DEFAULT_THEME: dark
+    volumes:
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - tempo
+      - prometheus
+    restart: unless-stopped
+
+  agent-ebpf-only:
+    build:
+      context: ./apps
+      dockerfile: ebpf-only/Dockerfile
+    image: ai-observability/agent-ebpf-only:local
+    container_name: ai-obs-demo-agent-ebpf-only
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      PORT: "8080"
+      OTEL_SERVICE_NAME: agent-ebpf-only
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)\"",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+    depends_on:
+      otel-collector:
+        condition: service_healthy
+    restart: unless-stopped
+
+  agent-openlit:
+    build:
+      context: ./apps
+      dockerfile: openlit-enabled/Dockerfile
+    image: ai-observability/agent-openlit:local
+    container_name: ai-obs-demo-agent-openlit
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      PORT: "8081"
+      OTEL_SERVICE_NAME: agent-openlit
+      OTEL_DEPLOYMENT_ENVIRONMENT: kubecon-demo
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=2)\"",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+    depends_on:
+      otel-collector:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # OBI: zero-code eBPF instrumentation. Per the OBI Docker docs this only needs
+  # host PID namespace + privileged. It starts after the agent is up so it attaches
+  # to the live process immediately.
+  # https://opentelemetry.io/docs/zero-code/obi/setup/docker/
+  obi:
+    image: otel/ebpf-instrument:v0.9.0
+    pid: host
+    privileged: true
+    environment:
+      OTEL_EBPF_CONFIG_PATH: /etc/obi/config.yaml
+    volumes:
+      - ./config/obi-config.yaml:/etc/obi/config.yaml:ro
+      # bpffs for pinned eBPF maps — needed for reliable TLS payload capture
+      # (without it OBI logs "creating OTEL namespace in bpffs failed").
+      - /sys/fs/bpf:/sys/fs/bpf
+    depends_on:
+      otel-collector:
+        condition: service_healthy
+      agent-ebpf-only:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  tempo-data:
+  prometheus-data:
+  grafana-data:
