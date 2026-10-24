@@ -1,4 +1,4 @@
-# What did the agent do? — KubeCon Mumbai 2026 Demo
+# What did the agent do?
 
 Observability and accountability demo for AI agents using **OpenTelemetry eBPF Instrumentation (OBI)** and **OpenLIT**, with **Grafana**, **Tempo**, and **Prometheus**.
 
